@@ -209,31 +209,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-                filepath = os.path.join(OUTPUT_DIR, filename)
-                try:
-                    with open(filepath, 'w', encoding='utf-8') as f:
-                        f.write(f"# {title}\n\n") # Add title as header in the file
-                        f.write(content)
-                    logging.info(f"Successfully saved: {filepath}")
-                except IOError as e:
-                    logging.error(f"Error writing file {filepath}: {e}")
-                except Exception as e:
-                    logging.error(f"An unexpected error occurred while writing file {filepath}: {e}")
-            else:
-                logging.warning(f"Skipping chapter due to content fetch/parse error: {title}")
-
-            # Polite delay
-            logging.debug(f"Waiting for {REQUEST_DELAY_SECONDS} second(s)...")
-            time.sleep(REQUEST_DELAY_SECONDS)
-
-        logging.info("--- Scraping finished ---")
-
-    except requests.exceptions.Timeout:
-        logging.error(f"Timeout occurred while fetching the catalog page: {CATALOG_URL}")
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Error fetching catalog page {CATALOG_URL}: {e}")
-    except Exception as e:
-        logging.error(f"An unexpected error occurred during the scraping process: {e}", exc_info=True) # Log traceback
-
-if __name__ == "__main__":
-    main()
