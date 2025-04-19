@@ -20,6 +20,10 @@ HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 }
 
+# --- Constants for Warning/Error Messages ---
+MOBILE_WARNING_TEXT = "手機版頁面由於相容性問題暫不支持電腦端閱讀"
+LOAD_FAILURE_TEXT = "內容加載失敗！請重載或更換瀏覽器"
+
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -41,9 +45,7 @@ def get_chapter_content(page, chapter_url):
     content = None
     MAX_RELOADS = 2 # Allow more reload attempts for load failures
     reload_count = 0
-    # Define specific warning/error messages to check for
-    mobile_warning_text = "手機版頁面由於相容性問題暫不支持電腦端閱讀"
-    load_failure_text = "內容加載失敗！請重載或更換瀏覽器"
+    # Warning/error messages are now global constants (MOBILE_WARNING_TEXT, LOAD_FAILURE_TEXT)
 
     try:
         # Initial navigation - wait for network idle
@@ -78,7 +80,7 @@ def get_chapter_content(page, chapter_url):
 
 
             # Check for the mobile compatibility warning message before trying to extract
-            mobile_warning_locator = page.locator(f'text="{mobile_warning_text}"')
+            mobile_warning_locator = page.locator(f'text="{MOBILE_WARNING_TEXT}"')
             try:
                 # Use a short timeout for the warning check
                 if mobile_warning_locator.is_visible(timeout=2000): # Check for 2 seconds
@@ -128,8 +130,8 @@ def get_chapter_content(page, chapter_url):
                          logging.warning("page.evaluate() with XPath also returned empty text.")
 
                 # --- Check for Load Failure Message AFTER extraction attempt ---
-                if extracted_text and load_failure_text in extracted_text:
-                    logging.warning(f"Detected load failure message ('{load_failure_text}') in extracted content for {chapter_url}. Reloading page (Attempt {reload_count + 1}/{MAX_RELOADS})...")
+                if extracted_text and LOAD_FAILURE_TEXT in extracted_text:
+                    logging.warning(f"Detected load failure message ('{LOAD_FAILURE_TEXT}') in extracted content for {chapter_url}. Reloading page (Attempt {reload_count + 1}/{MAX_RELOADS})...")
                     reload_count += 1
                     if reload_count > MAX_RELOADS:
                         logging.error(f"Max reloads reached for {chapter_url} after detecting load failure message. Skipping.")
@@ -144,14 +146,7 @@ def get_chapter_content(page, chapter_url):
                     # Basic processing: join lines, remove extra whitespace
                     lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                     # Filter out potential leftover warning lines if needed
-                    lines = [line for line in lines if mobile_warning_text not in line and load_failure_text not in line]
-                    content = "\n\n".join(lines)
-                    logging.info(f"Successfully extracted valid content for {chapter_url}.")
-                    # Content seems valid (not empty and no load failure message)
-                    # Basic processing: join lines, remove extra whitespace
-                    lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
-                    # Filter out potential leftover warning lines if needed
-                    lines = [line for line in lines if mobile_warning_text not in line and load_failure_text not in line]
+                    lines = [line for line in lines if MOBILE_WARNING_TEXT not in line and LOAD_FAILURE_TEXT not in line]
                     content = "\n\n".join(lines) # Assign to content variable ONLY if valid
                     logging.info(f"Successfully extracted valid content for {chapter_url}.")
                     break # Exit the loop on successful extraction
@@ -294,7 +289,7 @@ def main():
                 content = get_chapter_content(page, url)
 
                 # Final check before saving (get_chapter_content should guarantee this, but belt-and-suspenders)
-                if content and load_failure_text not in content:
+                if content and LOAD_FAILURE_TEXT not in content:
                     try:
                         with open(filepath, 'w', encoding='utf-8') as f:
                             f.write(f"# {title}\n\n") # Add title as header in the file
@@ -304,7 +299,7 @@ def main():
                         logging.error(f"Error writing file {filepath}: {e}")
                     except Exception as e:
                         logging.error(f"An unexpected error occurred while writing file {filepath}: {e}")
-                elif content and load_failure_text in content:
+                elif content and LOAD_FAILURE_TEXT in content:
                      logging.error(f"Content for {title} still contains load failure message after retries. Skipping save.")
                 else:
                     # Content is None or empty after retries
