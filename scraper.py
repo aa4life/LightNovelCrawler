@@ -4,6 +4,7 @@ import os
 import time
 import re
 import logging
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 # --- Configuration ---
 BASE_URL = "https://tw.linovelib.com"
@@ -33,66 +34,55 @@ def sanitize_filename(filename):
         sanitized = "untitled"
     return sanitized + ".txt"
 
-def get_chapter_content(chapter_url):
-    """Fetches and extracts the text content of a single chapter with retries."""
-    logging.info(f"Fetching chapter content from: {chapter_url}")
-    retries = 0
-    while retries < MAX_RETRIES:
-        try:
-            response = requests.get(chapter_url, headers=HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
-            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+# Keep requests for catalog fetching, use Playwright for chapter content
+def get_chapter_content(page, chapter_url):
+    """Fetches and extracts the text content of a single chapter using Playwright."""
+    logging.info(f"Fetching chapter content using Playwright from: {chapter_url}")
+    try:
+        # Navigate to the chapter page
+        page.goto(chapter_url, timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 2) # Increased timeout for playwright nav
 
-            # Use apparent_encoding for better guessing, fallback to utf-8
-            response.encoding = response.apparent_encoding if response.apparent_encoding else 'utf-8'
-            soup = BeautifulSoup(response.text, 'html.parser')
+        # Wait for the specific content element to be present
+        # Use a longer timeout here as JS loading might take time
+        content_locator = page.locator('#TextContent')
+        content_locator.wait_for(state='visible', timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 2) # Wait up to 30s
 
-            # Find the main content div (Updated ID based on inspection)
-            content_div = soup.find('div', id='TextContent')
-            if not content_div:
-                # Fallback attempt if 'TextContent' is not found
-                logging.warning(f"Content div ('#TextContent') not found for {chapter_url}. Trying fallback ('#content')...")
-                content_div = soup.find('div', id='content')
-                if not content_div:
-                    logging.error(f"Fallback content div ('#content') also not found for {chapter_url}. Cannot extract content.")
-                    return None # Give up if neither is found
+        # Get the HTML content of the div
+        content_html = content_locator.inner_html()
 
-            # Extract text primarily from <p> tags within the content div
-            paragraphs = content_div.find_all('p')
-            if paragraphs:
-                # Join text from all paragraphs, stripping extra whitespace from each
-                content = "\n\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
-            else:
-                # Fallback: get all text from the div if no <p> tags found
-                logging.warning(f"No <p> tags found in content div for {chapter_url}. Using fallback text extraction.")
-                content = content_div.get_text(strip=True, separator='\n\n')
+        # Parse the extracted HTML with BeautifulSoup
+        soup = BeautifulSoup(content_html, 'html.parser')
 
-            # Basic cleaning: remove potential leftover script/style tags if any were inside #content
-            content = re.sub(r'<script.*?</script>', '', content, flags=re.DOTALL | re.IGNORECASE)
-            content = re.sub(r'<style.*?</style>', '', content, flags=re.DOTALL | re.IGNORECASE)
+        # Extract text primarily from <p> tags within the content div
+        paragraphs = soup.find_all('p')
+        if paragraphs:
+            # Join text from all paragraphs, stripping extra whitespace from each
+            content = "\n\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
+        else:
+            # Fallback: get all text from the div if no <p> tags found
+            logging.warning(f"No <p> tags found in content div for {chapter_url}. Using fallback text extraction.")
+            # Get text directly from the Playwright locator if soup fails
+            content = content_locator.text_content(timeout=5000) # 5s timeout for text extraction
+            if content:
+                 content = "\n\n".join(line.strip() for line in content.splitlines() if line.strip())
 
-            return content.strip() # Return cleaned, stripped content
 
-        except requests.exceptions.Timeout:
-            logging.warning(f"Timeout occurred while fetching {chapter_url}. Retrying ({retries + 1}/{MAX_RETRIES})...")
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 429: # Too Many Requests
-                wait_time = RETRY_DELAY_SECONDS * (2 ** retries) # Exponential backoff
-                logging.warning(f"Received 429 (Too Many Requests) for {chapter_url}. Waiting {wait_time}s before retrying ({retries + 1}/{MAX_RETRIES})...")
-                time.sleep(wait_time)
-            else:
-                logging.error(f"HTTP error fetching chapter {chapter_url}: {e}")
-                return None # Don't retry for other HTTP errors
-        except requests.exceptions.RequestException as e:
-            logging.error(f"Request error fetching chapter {chapter_url}: {e}. Retrying ({retries + 1}/{MAX_RETRIES})...")
-            time.sleep(RETRY_DELAY_SECONDS) # Simple delay for general request errors
-        except Exception as e:
-            logging.error(f"Error parsing chapter {chapter_url}: {e}")
-            return None # Don't retry parsing errors
+        if not content:
+             logging.warning(f"Extracted content is empty for {chapter_url}")
+             return None
 
-        retries += 1
+        # Basic cleaning (less critical now as we target specific div)
+        content = re.sub(r'<script.*?</script>', '', content, flags=re.DOTALL | re.IGNORECASE)
+        content = re.sub(r'<style.*?</style>', '', content, flags=re.DOTALL | re.IGNORECASE)
 
-    logging.error(f"Failed to fetch chapter {chapter_url} after {MAX_RETRIES} retries.")
-    return None
+        return content.strip() # Return cleaned, stripped content
+
+    except PlaywrightTimeoutError:
+        logging.error(f"Playwright timeout waiting for content or navigation for {chapter_url}")
+        return None
+    except Exception as e:
+        logging.error(f"Error processing chapter {chapter_url} with Playwright: {e}", exc_info=True)
+        return None
 
 
 def get_chapter_links(catalog_soup):
@@ -132,42 +122,93 @@ def main():
     """Main function to orchestrate the scraping process."""
     logging.info(f"Starting scraper for catalog: {CATALOG_URL}")
 
+    # --- Fetch Catalog using Requests (usually faster and less resource intensive) ---
     try:
-        logging.info("Fetching catalog page...")
-        # Use headers for the catalog request as well
+        logging.info("Fetching catalog page using Requests...")
         response = requests.get(CATALOG_URL, headers=HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
         response.raise_for_status()
         response.encoding = response.apparent_encoding if response.apparent_encoding else 'utf-8'
         logging.info("Catalog page fetched successfully.")
-
-        soup = BeautifulSoup(response.text, 'html.parser')
-
-        chapter_links = get_chapter_links(soup)
+        catalog_soup = BeautifulSoup(response.text, 'html.parser')
+        chapter_links = get_chapter_links(catalog_soup)
 
         if not chapter_links:
-            logging.error("Failed to find any valid chapter links. Exiting.")
+            logging.error("Failed to find any valid chapter links from catalog. Exiting.")
             return
 
         logging.info(f"Found {len(chapter_links)} chapters to download.")
 
-        # Create output directory if it doesn't exist
+    except requests.exceptions.Timeout:
+        logging.error(f"Timeout occurred while fetching the catalog page: {CATALOG_URL}")
+        return
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error fetching catalog page {CATALOG_URL}: {e}")
+        return
+    except Exception as e:
+        logging.error(f"An unexpected error occurred during catalog fetching: {e}", exc_info=True)
+        return
+
+    # --- Create output directory ---
+    try:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        logging.info(f"Output directory '{OUTPUT_DIR}' ensured.")
+    except OSError as e:
+        logging.error(f"Failed to create output directory '{OUTPUT_DIR}': {e}")
+        return
+
+    # --- Process Chapters using Playwright ---
+    with sync_playwright() as p:
         try:
-            os.makedirs(OUTPUT_DIR, exist_ok=True)
-            logging.info(f"Output directory '{OUTPUT_DIR}' ensured.")
-        except OSError as e:
-            logging.error(f"Failed to create output directory '{OUTPUT_DIR}': {e}")
-            return
+            # Launch browser (consider chromium, firefox, or webkit)
+            # headless=True runs without opening a visible browser window
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            # Add headers to Playwright requests too
+            page.set_extra_http_headers(HEADERS)
 
-        # Process each chapter
-        for i, chapter in enumerate(chapter_links):
-            title = chapter['title']
-            url = chapter['url']
-            logging.info(f"--- Processing chapter {i+1}/{len(chapter_links)}: {title} ---")
+            logging.info("Playwright browser launched.")
 
-            content = get_chapter_content(url)
+            # Process each chapter
+            for i, chapter in enumerate(chapter_links):
+                title = chapter['title']
+                url = chapter['url']
+                logging.info(f"--- Processing chapter {i+1}/{len(chapter_links)}: {title} ---")
 
-            if content:
-                filename = sanitize_filename(title)
+                # Use the Playwright page object
+                content = get_chapter_content(page, url)
+
+                if content:
+                    filename = sanitize_filename(title)
+                    filepath = os.path.join(OUTPUT_DIR, filename)
+                    try:
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            f.write(f"# {title}\n\n") # Add title as header in the file
+                            f.write(content)
+                        logging.info(f"Successfully saved: {filepath}")
+                    except IOError as e:
+                        logging.error(f"Error writing file {filepath}: {e}")
+                    except Exception as e:
+                        logging.error(f"An unexpected error occurred while writing file {filepath}: {e}")
+                else:
+                    logging.warning(f"Skipping chapter due to content fetch/parse error: {title}")
+
+                # Polite delay (still important)
+                logging.debug(f"Waiting for {REQUEST_DELAY_SECONDS} second(s)...")
+                time.sleep(REQUEST_DELAY_SECONDS)
+
+            browser.close()
+            logging.info("Playwright browser closed.")
+
+        except Exception as e:
+            logging.error(f"An unexpected error occurred during Playwright processing: {e}", exc_info=True)
+            if 'browser' in locals() and browser.is_connected():
+                 browser.close() # Ensure browser is closed on error
+
+    logging.info("--- Scraping finished ---")
+
+
+if __name__ == "__main__":
+    main()
                 filepath = os.path.join(OUTPUT_DIR, filename)
                 try:
                     with open(filepath, 'w', encoding='utf-8') as f:
