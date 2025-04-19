@@ -39,13 +39,15 @@ def get_chapter_content(page, chapter_url):
     """Fetches and extracts the text content of a single chapter using Playwright."""
     logging.info(f"Fetching chapter content using Playwright from: {chapter_url}")
     try:
-        # Navigate to the chapter page
-        page.goto(chapter_url, timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 2) # Increased timeout for playwright nav
+        # Navigate to the chapter page with a longer timeout
+        page.goto(chapter_url, timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4, wait_until='domcontentloaded') # Wait up to 60s, wait for DOM ready
 
-        # Wait for the specific content element to be present
+        # Wait for the specific content element to be present with a longer timeout
         # Use a longer timeout here as JS loading might take time
         content_locator = page.locator('#TextContent')
-        content_locator.wait_for(state='visible', timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 2) # Wait up to 30s
+        logging.info(f"Waiting for #TextContent to be visible...")
+        content_locator.wait_for(state='visible', timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4) # Wait up to 60s
+        logging.info(f"#TextContent is visible. Extracting content...")
 
         # Get the HTML content of the div
         content_html = content_locator.inner_html()
@@ -160,8 +162,8 @@ def main():
     with sync_playwright() as p:
         try:
             # Launch browser (consider chromium, firefox, or webkit)
-            # headless=True runs without opening a visible browser window
-            browser = p.chromium.launch(headless=True)
+            # headless=True runs without opening a visible browser window. Set to False for debugging.
+            browser = p.chromium.launch(headless=True) # Set to False to see the browser window
             page = browser.new_page()
             # Add headers to Playwright requests too
             page.set_extra_http_headers(HEADERS)
