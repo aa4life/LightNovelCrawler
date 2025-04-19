@@ -47,6 +47,33 @@ def get_chapter_content(page, chapter_url):
         page.goto(chapter_url, timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4, wait_until='networkidle') # Wait up to 60s
 
         while reload_count <= MAX_RELOADS:
+            # --- Attempt to close potential overlays/ads ---
+            try:
+                logging.debug("Attempting to close potential overlays...")
+                # Try common close button patterns (add more specific selectors if identified)
+                close_buttons = [
+                    page.locator('button:has-text("關閉")'),
+                    page.locator('button:has-text("Close")'),
+                    page.locator('[class*="close"]'),
+                    page.locator('[id*="close"]')
+                    # Add more specific selectors here if you identify them
+                ]
+                for i, button in enumerate(close_buttons):
+                    # Check if the button exists and is visible within a short timeout
+                    if button.first.is_visible(timeout=500): # Quick check
+                        logging.info(f"Found potential close button (pattern {i+1}). Clicking it...")
+                        button.first.click(timeout=1000) # Click with short timeout
+                        time.sleep(0.5) # Brief pause after clicking
+                        logging.info("Clicked potential close button.")
+                        # Optional: break after finding and clicking one, or try all
+                        # break
+            except PlaywrightTimeoutError:
+                logging.debug("No visible close buttons found matching patterns, or click timed out.")
+            except Exception as e:
+                logging.warning(f"Error trying to close overlay: {e}")
+            # --- End of overlay closing attempt ---
+
+
             # Check for the mobile compatibility warning message
             warning_text = "手機版頁面由於相容性問題暫不支持電腦端閱讀"
             warning_locator = page.locator(f'text="{warning_text}"')
@@ -72,18 +99,32 @@ def get_chapter_content(page, chapter_url):
 
             # Try to locate and extract content
             try:
-                # Wait for the first paragraph inside #TextContent as a signal
-                content_paragraph_locator = page.locator('#TextContent p')
-                logging.info(f"Waiting for first paragraph inside #TextContent ('#TextContent p') to be attached...")
-                # Wait for the first paragraph element to be in the DOM
-                content_paragraph_locator.first.wait_for(state='attached', timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4) # Wait up to 60s
-                logging.info(f"First paragraph is attached. Extracting inner text from #TextContent...")
+                content_locator = page.locator('#TextContent')
+                logging.info(f"Waiting for #TextContent to be attached...")
+                # Wait for the main container element to be in the DOM
+                content_locator.wait_for(state='attached', timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4) # Wait up to 60s
+                logging.info(f"#TextContent is attached. Attempting extraction...")
 
-                # Now that a paragraph exists, try extracting text from the parent container
-                content_container_locator = page.locator('#TextContent')
-                extracted_text = content_container_locator.inner_text(timeout=10000) # 10s timeout for text extraction
+                # Attempt 1: Use inner_text()
+                logging.debug("Attempting extraction with inner_text()...")
+                extracted_text = content_locator.inner_text(timeout=10000) # 10s timeout
 
-                if extracted_text:
+                # Attempt 2: Use page.evaluate() as fallback
+                if not extracted_text or extracted_text.strip() == "":
+                    logging.warning("#TextContent inner_text() was empty. Falling back to page.evaluate()...")
+                    extracted_text = page.evaluate(
+                        """() => {
+                            const element = document.getElementById('TextContent');
+                            return element ? element.innerText : null;
+                        }"""
+                    )
+                    if extracted_text:
+                         logging.info("Successfully extracted text using page.evaluate().")
+                    else:
+                         logging.warning("page.evaluate() also returned empty text.")
+
+
+                if extracted_text and extracted_text.strip() != "":
                     # Basic processing: join lines, remove extra whitespace
                     lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
                     # Filter out potential leftover warning lines if needed, though inner_text should be specific
