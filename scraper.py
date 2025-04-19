@@ -43,8 +43,8 @@ def get_chapter_content(page, chapter_url):
     reload_count = 0
 
     try:
-        # Initial navigation
-        page.goto(chapter_url, timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4, wait_until='domcontentloaded') # Wait up to 60s
+        # Initial navigation - wait for network idle
+        page.goto(chapter_url, timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4, wait_until='networkidle') # Wait up to 60s
 
         while reload_count <= MAX_RELOADS:
             # Check for the mobile compatibility warning message
@@ -58,8 +58,8 @@ def get_chapter_content(page, chapter_url):
                     if reload_count > MAX_RELOADS:
                         logging.error(f"Max reloads reached for {chapter_url} after detecting warning. Skipping.")
                         break
-                    # Reload the page
-                    page.reload(timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4, wait_until='domcontentloaded') # Wait up to 60s for reload
+                    # Reload the page - wait for network idle
+                    page.reload(timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4, wait_until='networkidle') # Wait up to 60s for reload
                     continue # Go back to the start of the loop to check again/extract
                 else:
                      logging.debug("Mobile compatibility warning not found.")
@@ -72,14 +72,16 @@ def get_chapter_content(page, chapter_url):
 
             # Try to locate and extract content
             try:
-                content_locator = page.locator('#TextContent')
-                logging.info(f"Waiting for #TextContent to be attached...")
-                # Wait for element to be in the DOM, not necessarily visible
-                content_locator.wait_for(state='attached', timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4) # Wait up to 60s
-                logging.info(f"#TextContent is attached. Extracting inner text...")
+                # Wait for the first paragraph inside #TextContent as a signal
+                content_paragraph_locator = page.locator('#TextContent p')
+                logging.info(f"Waiting for first paragraph inside #TextContent ('#TextContent p') to be attached...")
+                # Wait for the first paragraph element to be in the DOM
+                content_paragraph_locator.first.wait_for(state='attached', timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4) # Wait up to 60s
+                logging.info(f"First paragraph is attached. Extracting inner text from #TextContent...")
 
-                # Extract text directly using Playwright
-                extracted_text = content_locator.inner_text(timeout=10000) # 10s timeout for text extraction
+                # Now that a paragraph exists, try extracting text from the parent container
+                content_container_locator = page.locator('#TextContent')
+                extracted_text = content_container_locator.inner_text(timeout=10000) # 10s timeout for text extraction
 
                 if extracted_text:
                     # Basic processing: join lines, remove extra whitespace
