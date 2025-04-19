@@ -97,31 +97,33 @@ def get_chapter_content(page, chapter_url):
                  logging.warning(f"Error checking for warning message: {e}")
 
 
-            # Try to locate and extract content
+            # Try to locate and extract content using the provided XPath
             try:
-                content_locator = page.locator('#TextContent')
-                logging.info(f"Waiting for #TextContent to be attached...")
+                # Use the XPath provided by the user
+                xpath_selector = '/html/body/div[1]/div[1]/div/div[2]'
+                content_locator = page.locator(f'xpath={xpath_selector}')
+                logging.info(f"Waiting for element with XPath '{xpath_selector}' to be attached...")
                 # Wait for the main container element to be in the DOM
                 content_locator.wait_for(state='attached', timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4) # Wait up to 60s
-                logging.info(f"#TextContent is attached. Attempting extraction...")
+                logging.info(f"Element with XPath '{xpath_selector}' is attached. Attempting extraction...")
 
                 # Attempt 1: Use inner_text()
                 logging.debug("Attempting extraction with inner_text()...")
                 extracted_text = content_locator.inner_text(timeout=10000) # 10s timeout
 
-                # Attempt 2: Use page.evaluate() as fallback
+                # Attempt 2: Use page.evaluate() with XPath as fallback
                 if not extracted_text or extracted_text.strip() == "":
-                    logging.warning("#TextContent inner_text() was empty. Falling back to page.evaluate()...")
+                    logging.warning(f"XPath '{xpath_selector}' inner_text() was empty. Falling back to page.evaluate() with XPath...")
                     extracted_text = page.evaluate(
-                        """() => {
-                            const element = document.getElementById('TextContent');
+                        """(xpath) => {
+                            const element = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
                             return element ? element.innerText : null;
-                        }"""
+                        }""", xpath_selector # Pass the xpath selector to the function
                     )
                     if extracted_text:
-                         logging.info("Successfully extracted text using page.evaluate().")
+                         logging.info("Successfully extracted text using page.evaluate() with XPath.")
                     else:
-                         logging.warning("page.evaluate() also returned empty text.")
+                         logging.warning("page.evaluate() with XPath also returned empty text.")
 
 
                 if extracted_text and extracted_text.strip() != "":
@@ -138,11 +140,11 @@ def get_chapter_content(page, chapter_url):
                     break
 
             except PlaywrightTimeoutError:
-                logging.error(f"Playwright timeout waiting for #TextContent or extracting text for {chapter_url}.")
+                logging.error(f"Playwright timeout waiting for XPath '{xpath_selector}' or extracting text for {chapter_url}.")
                 # Break the loop on timeout, no point retrying immediately
                 break
             except Exception as e:
-                logging.error(f"Error locating/extracting content from #TextContent: {e}", exc_info=True)
+                logging.error(f"Error locating/extracting content from XPath '{xpath_selector}': {e}", exc_info=True)
                 # Break the loop on other errors
                 break
 
