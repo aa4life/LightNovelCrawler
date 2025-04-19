@@ -147,12 +147,24 @@ def get_chapter_content(page, chapter_url):
                     lines = [line for line in lines if mobile_warning_text not in line and load_failure_text not in line]
                     content = "\n\n".join(lines)
                     logging.info(f"Successfully extracted valid content for {chapter_url}.")
+                    # Content seems valid (not empty and no load failure message)
+                    # Basic processing: join lines, remove extra whitespace
+                    lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
+                    # Filter out potential leftover warning lines if needed
+                    lines = [line for line in lines if mobile_warning_text not in line and load_failure_text not in line]
+                    content = "\n\n".join(lines) # Assign to content variable ONLY if valid
+                    logging.info(f"Successfully extracted valid content for {chapter_url}.")
                     break # Exit the loop on successful extraction
                 else:
                     # Extracted text was empty or None even after fallbacks
-                    logging.warning(f"Extracted text is empty for {chapter_url} after all attempts.")
-                    # Break the loop, as retrying likely won't help if element exists but text is empty
-                    break
+                    logging.warning(f"Extracted text is empty for {chapter_url} after all attempts in this reload cycle.")
+                    # Break the inner try block, but the outer while loop might retry if reloads remain
+                    # However, if the element exists but text is empty, reloading might not help. Let's break the while loop.
+                    content = None # Ensure content is None if extraction failed
+                    break # Break the while loop
+
+            except PlaywrightTimeoutError:
+                logging.error(f"Playwright timeout waiting for XPath '{xpath_selector}' or extracting text for {chapter_url}.")
 
             except PlaywrightTimeoutError:
                 logging.error(f"Playwright timeout waiting for XPath '{xpath_selector}' or extracting text for {chapter_url}.")
@@ -270,12 +282,19 @@ def main():
                 url = chapter['url']
                 logging.info(f"--- Processing chapter {i+1}/{len(chapter_links)}: {title} ---")
 
+                # --- Check if chapter already downloaded ---
+                filename = sanitize_filename(title)
+                filepath = os.path.join(OUTPUT_DIR, filename)
+                if os.path.exists(filepath):
+                    logging.info(f"Skipping already downloaded chapter: {filepath}")
+                    continue # Move to the next chapter
+                # --- End check ---
+
                 # Use the Playwright page object
                 content = get_chapter_content(page, url)
 
-                if content:
-                    filename = sanitize_filename(title)
-                    filepath = os.path.join(OUTPUT_DIR, filename)
+                # Final check before saving (get_chapter_content should guarantee this, but belt-and-suspenders)
+                if content and load_failure_text not in content:
                     try:
                         with open(filepath, 'w', encoding='utf-8') as f:
                             f.write(f"# {title}\n\n") # Add title as header in the file
@@ -285,8 +304,11 @@ def main():
                         logging.error(f"Error writing file {filepath}: {e}")
                     except Exception as e:
                         logging.error(f"An unexpected error occurred while writing file {filepath}: {e}")
+                elif content and load_failure_text in content:
+                     logging.error(f"Content for {title} still contains load failure message after retries. Skipping save.")
                 else:
-                    logging.warning(f"Skipping chapter due to content fetch/parse error: {title}")
+                    # Content is None or empty after retries
+                    logging.warning(f"Skipping chapter due to content fetch/parse error or load failure: {title}")
 
                 # Polite delay (still important)
                 logging.debug(f"Waiting for {REQUEST_DELAY_SECONDS} second(s)...")
