@@ -163,7 +163,7 @@ def main():
         try:
             # Launch browser (consider chromium, firefox, or webkit)
             # headless=True runs without opening a visible browser window. Set to False for debugging.
-            browser = p.chromium.launch(headless=True) # Set to False to see the browser window
+            browser = p.chromium.launch(headless=False) # Set to False to see the browser window
             page = browser.new_page()
             # Add headers to Playwright requests too
             page.set_extra_http_headers(HEADERS)
