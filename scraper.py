@@ -36,11 +36,14 @@ def sanitize_filename(filename):
 
 # Keep requests for catalog fetching, use Playwright for chapter content
 def get_chapter_content(page, chapter_url):
-    """Fetches and extracts the text content of a single chapter using Playwright, with reload on warning."""
+    """Fetches and extracts the text content of a single chapter using Playwright, with reload on warning or load failure."""
     logging.info(f"Fetching chapter content using Playwright from: {chapter_url}")
     content = None
-    MAX_RELOADS = 1 # Allow one reload attempt
+    MAX_RELOADS = 2 # Allow more reload attempts for load failures
     reload_count = 0
+    # Define specific warning/error messages to check for
+    mobile_warning_text = "手機版頁面由於相容性問題暫不支持電腦端閱讀"
+    load_failure_text = "內容加載失敗！請重載或更換瀏覽器"
 
     try:
         # Initial navigation - wait for network idle
@@ -74,16 +77,15 @@ def get_chapter_content(page, chapter_url):
             # --- End of overlay closing attempt ---
 
 
-            # Check for the mobile compatibility warning message
-            warning_text = "手機版頁面由於相容性問題暫不支持電腦端閱讀"
-            warning_locator = page.locator(f'text="{warning_text}"')
+            # Check for the mobile compatibility warning message before trying to extract
+            mobile_warning_locator = page.locator(f'text="{mobile_warning_text}"')
             try:
                 # Use a short timeout for the warning check
-                if warning_locator.is_visible(timeout=2000): # Check for 2 seconds
+                if mobile_warning_locator.is_visible(timeout=2000): # Check for 2 seconds
                     logging.warning(f"Detected mobile compatibility warning on {chapter_url}. Reloading page (Attempt {reload_count + 1}/{MAX_RELOADS})...")
                     reload_count += 1
                     if reload_count > MAX_RELOADS:
-                        logging.error(f"Max reloads reached for {chapter_url} after detecting warning. Skipping.")
+                        logging.error(f"Max reloads reached for {chapter_url} after detecting mobile warning. Skipping.")
                         break
                     # Reload the page - wait for network idle
                     page.reload(timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4, wait_until='networkidle') # Wait up to 60s for reload
@@ -125,18 +127,31 @@ def get_chapter_content(page, chapter_url):
                     else:
                          logging.warning("page.evaluate() with XPath also returned empty text.")
 
+                # --- Check for Load Failure Message AFTER extraction attempt ---
+                if extracted_text and load_failure_text in extracted_text:
+                    logging.warning(f"Detected load failure message ('{load_failure_text}') in extracted content for {chapter_url}. Reloading page (Attempt {reload_count + 1}/{MAX_RELOADS})...")
+                    reload_count += 1
+                    if reload_count > MAX_RELOADS:
+                        logging.error(f"Max reloads reached for {chapter_url} after detecting load failure message. Skipping.")
+                        break
+                    # Reload the page - wait for network idle
+                    page.reload(timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4, wait_until='networkidle') # Wait up to 60s for reload
+                    continue # Go back to the start of the loop to retry extraction
 
-                if extracted_text and extracted_text.strip() != "":
+                # --- Check if extraction was successful and valid ---
+                elif extracted_text and extracted_text.strip() != "":
+                    # Content seems valid (not empty and no load failure message)
                     # Basic processing: join lines, remove extra whitespace
                     lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
-                    # Filter out potential leftover warning lines if needed, though inner_text should be specific
-                    lines = [line for line in lines if warning_text not in line]
+                    # Filter out potential leftover warning lines if needed
+                    lines = [line for line in lines if mobile_warning_text not in line and load_failure_text not in line]
                     content = "\n\n".join(lines)
-                    logging.info(f"Successfully extracted content for {chapter_url}.")
+                    logging.info(f"Successfully extracted valid content for {chapter_url}.")
                     break # Exit the loop on successful extraction
                 else:
-                    logging.warning(f"Extracted text from #TextContent is empty for {chapter_url}.")
-                    # Decide if you want to retry or break here. Let's break.
+                    # Extracted text was empty or None even after fallbacks
+                    logging.warning(f"Extracted text is empty for {chapter_url} after all attempts.")
+                    # Break the loop, as retrying likely won't help if element exists but text is empty
                     break
 
             except PlaywrightTimeoutError:
