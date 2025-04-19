@@ -36,54 +36,87 @@ def sanitize_filename(filename):
 
 # Keep requests for catalog fetching, use Playwright for chapter content
 def get_chapter_content(page, chapter_url):
-    """Fetches and extracts the text content of a single chapter using Playwright."""
+    """Fetches and extracts the text content of a single chapter using Playwright, with reload on warning."""
     logging.info(f"Fetching chapter content using Playwright from: {chapter_url}")
+    content = None
+    MAX_RELOADS = 1 # Allow one reload attempt
+    reload_count = 0
+
     try:
-        # Navigate to the chapter page with a longer timeout
-        page.goto(chapter_url, timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4, wait_until='domcontentloaded') # Wait up to 60s, wait for DOM ready
+        # Initial navigation
+        page.goto(chapter_url, timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4, wait_until='domcontentloaded') # Wait up to 60s
 
-        # Wait for the specific content element to be present with a longer timeout
-        # Use a longer timeout here as JS loading might take time
-        content_locator = page.locator('#TextContent')
-        logging.info(f"Waiting for #TextContent to be visible...")
-        content_locator.wait_for(state='visible', timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4) # Wait up to 60s
-        logging.info(f"#TextContent is visible. Extracting content...")
+        while reload_count <= MAX_RELOADS:
+            # Check for the mobile compatibility warning message
+            warning_text = "手機版頁面由於相容性問題暫不支持電腦端閱讀"
+            warning_locator = page.locator(f'text="{warning_text}"')
+            try:
+                # Use a short timeout for the warning check
+                if warning_locator.is_visible(timeout=2000): # Check for 2 seconds
+                    logging.warning(f"Detected mobile compatibility warning on {chapter_url}. Reloading page (Attempt {reload_count + 1}/{MAX_RELOADS})...")
+                    reload_count += 1
+                    if reload_count > MAX_RELOADS:
+                        logging.error(f"Max reloads reached for {chapter_url} after detecting warning. Skipping.")
+                        break
+                    # Reload the page
+                    page.reload(timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4, wait_until='domcontentloaded') # Wait up to 60s for reload
+                    continue # Go back to the start of the loop to check again/extract
+                else:
+                     logging.debug("Mobile compatibility warning not found.")
 
-        # Get the HTML content of the div
-        content_html = content_locator.inner_html()
+            except PlaywrightTimeoutError:
+                 logging.debug("Mobile compatibility warning check timed out (warning likely not present).")
+            except Exception as e:
+                 logging.warning(f"Error checking for warning message: {e}")
 
-        # Parse the extracted HTML with BeautifulSoup
-        soup = BeautifulSoup(content_html, 'html.parser')
 
-        # Extract text primarily from <p> tags within the content div
-        paragraphs = soup.find_all('p')
-        if paragraphs:
-            # Join text from all paragraphs, stripping extra whitespace from each
-            content = "\n\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
-        else:
-            # Fallback: get all text from the div if no <p> tags found
-            logging.warning(f"No <p> tags found in content div for {chapter_url}. Using fallback text extraction.")
-            # Get text directly from the Playwright locator if soup fails
-            content = content_locator.text_content(timeout=5000) # 5s timeout for text extraction
-            if content:
-                 content = "\n\n".join(line.strip() for line in content.splitlines() if line.strip())
+            # Try to locate and extract content
+            try:
+                content_locator = page.locator('#TextContent')
+                logging.info(f"Waiting for #TextContent to be attached...")
+                # Wait for element to be in the DOM, not necessarily visible
+                content_locator.wait_for(state='attached', timeout=REQUEST_TIMEOUT_SECONDS * 1000 * 4) # Wait up to 60s
+                logging.info(f"#TextContent is attached. Extracting inner text...")
 
+                # Extract text directly using Playwright
+                extracted_text = content_locator.inner_text(timeout=10000) # 10s timeout for text extraction
+
+                if extracted_text:
+                    # Basic processing: join lines, remove extra whitespace
+                    lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
+                    # Filter out potential leftover warning lines if needed, though inner_text should be specific
+                    lines = [line for line in lines if warning_text not in line]
+                    content = "\n\n".join(lines)
+                    logging.info(f"Successfully extracted content for {chapter_url}.")
+                    break # Exit the loop on successful extraction
+                else:
+                    logging.warning(f"Extracted text from #TextContent is empty for {chapter_url}.")
+                    # Decide if you want to retry or break here. Let's break.
+                    break
+
+            except PlaywrightTimeoutError:
+                logging.error(f"Playwright timeout waiting for #TextContent or extracting text for {chapter_url}.")
+                # Break the loop on timeout, no point retrying immediately
+                break
+            except Exception as e:
+                logging.error(f"Error locating/extracting content from #TextContent: {e}", exc_info=True)
+                # Break the loop on other errors
+                break
+
+        # --- End of while loop ---
 
         if not content:
-             logging.warning(f"Extracted content is empty for {chapter_url}")
+             logging.warning(f"Failed to extract content for {chapter_url} after {reload_count} reloads.")
              return None
 
-        # Basic cleaning (less critical now as we target specific div)
-        content = re.sub(r'<script.*?</script>', '', content, flags=re.DOTALL | re.IGNORECASE)
-        content = re.sub(r'<style.*?</style>', '', content, flags=re.DOTALL | re.IGNORECASE)
-
-        return content.strip() # Return cleaned, stripped content
+        # No need for BeautifulSoup parsing or further regex cleaning if inner_text worked well
+        return content.strip()
 
     except PlaywrightTimeoutError:
-        logging.error(f"Playwright timeout waiting for content or navigation for {chapter_url}")
+        logging.error(f"Playwright timeout during initial navigation or reload for {chapter_url}")
         return None
     except Exception as e:
-        logging.error(f"Error processing chapter {chapter_url} with Playwright: {e}", exc_info=True)
+        logging.error(f"General error processing chapter {chapter_url} with Playwright: {e}", exc_info=True)
         return None
 
 
