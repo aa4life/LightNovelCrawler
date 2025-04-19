@@ -197,13 +197,14 @@ def main():
     with sync_playwright() as p:
         try:
             # Launch browser (consider chromium, firefox, or webkit)
-            # headless=True runs without opening a visible browser window. Set to False for debugging.
             browser = p.chromium.launch(headless=False) # Set to False to see the browser window
-            page = browser.new_page()
-            # Add headers to Playwright requests too
-            page.set_extra_http_headers(HEADERS)
 
-            logging.info("Playwright browser launched.")
+            # Define mobile device emulation
+            context = browser.new_context(**p.devices['Pixel 5']) # Emulate Pixel 5
+            page = context.new_page()
+            # No need to set extra headers manually, device emulation handles User-Agent
+
+            logging.info("Playwright browser launched with mobile emulation (Pixel 5).")
 
             # Process each chapter
             for i, chapter in enumerate(chapter_links):
@@ -233,11 +234,14 @@ def main():
                 logging.debug(f"Waiting for {REQUEST_DELAY_SECONDS} second(s)...")
                 time.sleep(REQUEST_DELAY_SECONDS)
 
+            context.close() # Close the context first
             browser.close()
-            logging.info("Playwright browser closed.")
+            logging.info("Playwright browser and context closed.")
 
         except Exception as e:
             logging.error(f"An unexpected error occurred during Playwright processing: {e}", exc_info=True)
+            if 'context' in locals():
+                 context.close() # Ensure context is closed on error
             if 'browser' in locals() and browser.is_connected():
                  browser.close() # Ensure browser is closed on error
 
