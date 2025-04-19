@@ -97,32 +97,6 @@ def get_chapter_content(chapter_url):
 
 def get_chapter_links(catalog_soup):
     """Extracts chapter links starting from '第1章' from the parsed catalog page."""
-        if paragraphs:
-            # Join text from all paragraphs, stripping extra whitespace from each
-            content = "\n\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
-        else:
-            # Fallback: get all text from the div if no <p> tags found
-            logging.warning(f"No <p> tags found in content div for {chapter_url}. Using fallback text extraction.")
-            content = content_div.get_text(strip=True, separator='\n\n')
-
-        # Basic cleaning: remove potential leftover script/style tags if any were inside #content
-        content = re.sub(r'<script.*?</script>', '', content, flags=re.DOTALL | re.IGNORECASE)
-        content = re.sub(r'<style.*?</style>', '', content, flags=re.DOTALL | re.IGNORECASE)
-
-        return content.strip() # Return cleaned, stripped content
-
-    except requests.exceptions.Timeout:
-        logging.error(f"Timeout occurred while fetching {chapter_url}")
-        return None
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Error fetching chapter {chapter_url}: {e}")
-        return None
-    except Exception as e:
-        logging.error(f"Error parsing chapter {chapter_url}: {e}")
-        return None
-
-def get_chapter_links(catalog_soup):
-    """Extracts chapter links starting from '第1章' from the parsed catalog page."""
     chapter_links = []
     # Find all links within the catalog page that potentially link to chapters
     # The relevant links have hrefs like /novel/4519/xxxxx.html
