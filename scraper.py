@@ -9,8 +9,15 @@ import logging
 BASE_URL = "https://tw.linovelib.com"
 CATALOG_URL = f"{BASE_URL}/novel/4519/catalog"
 OUTPUT_DIR = "novel_chapters"
-REQUEST_DELAY_SECONDS = 1 # Delay between requests to be polite to the server
+REQUEST_DELAY_SECONDS = 3 # Increased delay between requests
 REQUEST_TIMEOUT_SECONDS = 15 # Timeout for network requests
+MAX_RETRIES = 3 # Maximum number of retries for failed requests
+RETRY_DELAY_SECONDS = 5 # Initial delay before retrying failed requests
+
+# --- Headers ---
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+}
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -27,24 +34,69 @@ def sanitize_filename(filename):
     return sanitized + ".txt"
 
 def get_chapter_content(chapter_url):
-    """Fetches and extracts the text content of a single chapter."""
+    """Fetches and extracts the text content of a single chapter with retries."""
     logging.info(f"Fetching chapter content from: {chapter_url}")
-    try:
-        response = requests.get(chapter_url, timeout=REQUEST_TIMEOUT_SECONDS)
-        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
-        # Use apparent_encoding for better guessing, fallback to utf-8
-        response.encoding = response.apparent_encoding if response.apparent_encoding else 'utf-8'
+    retries = 0
+    while retries < MAX_RETRIES:
+        try:
+            response = requests.get(chapter_url, headers=HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
+            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
 
-        soup = BeautifulSoup(response.text, 'html.parser')
+            # Use apparent_encoding for better guessing, fallback to utf-8
+            response.encoding = response.apparent_encoding if response.apparent_encoding else 'utf-8'
+            soup = BeautifulSoup(response.text, 'html.parser')
 
-        # Find the main content div (inspected from the website)
-        content_div = soup.find('div', id='content')
-        if not content_div:
-            logging.warning(f"Content div ('#content') not found for {chapter_url}")
-            return None
+            # Find the main content div (Updated ID based on inspection)
+            content_div = soup.find('div', id='TextContent')
+            if not content_div:
+                # Fallback attempt if 'TextContent' is not found
+                logging.warning(f"Content div ('#TextContent') not found for {chapter_url}. Trying fallback ('#content')...")
+                content_div = soup.find('div', id='content')
+                if not content_div:
+                    logging.error(f"Fallback content div ('#content') also not found for {chapter_url}. Cannot extract content.")
+                    return None # Give up if neither is found
 
-        # Extract text primarily from <p> tags within the content div
-        paragraphs = content_div.find_all('p')
+            # Extract text primarily from <p> tags within the content div
+            paragraphs = content_div.find_all('p')
+            if paragraphs:
+                # Join text from all paragraphs, stripping extra whitespace from each
+                content = "\n\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
+            else:
+                # Fallback: get all text from the div if no <p> tags found
+                logging.warning(f"No <p> tags found in content div for {chapter_url}. Using fallback text extraction.")
+                content = content_div.get_text(strip=True, separator='\n\n')
+
+            # Basic cleaning: remove potential leftover script/style tags if any were inside #content
+            content = re.sub(r'<script.*?</script>', '', content, flags=re.DOTALL | re.IGNORECASE)
+            content = re.sub(r'<style.*?</style>', '', content, flags=re.DOTALL | re.IGNORECASE)
+
+            return content.strip() # Return cleaned, stripped content
+
+        except requests.exceptions.Timeout:
+            logging.warning(f"Timeout occurred while fetching {chapter_url}. Retrying ({retries + 1}/{MAX_RETRIES})...")
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429: # Too Many Requests
+                wait_time = RETRY_DELAY_SECONDS * (2 ** retries) # Exponential backoff
+                logging.warning(f"Received 429 (Too Many Requests) for {chapter_url}. Waiting {wait_time}s before retrying ({retries + 1}/{MAX_RETRIES})...")
+                time.sleep(wait_time)
+            else:
+                logging.error(f"HTTP error fetching chapter {chapter_url}: {e}")
+                return None # Don't retry for other HTTP errors
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Request error fetching chapter {chapter_url}: {e}. Retrying ({retries + 1}/{MAX_RETRIES})...")
+            time.sleep(RETRY_DELAY_SECONDS) # Simple delay for general request errors
+        except Exception as e:
+            logging.error(f"Error parsing chapter {chapter_url}: {e}")
+            return None # Don't retry parsing errors
+
+        retries += 1
+
+    logging.error(f"Failed to fetch chapter {chapter_url} after {MAX_RETRIES} retries.")
+    return None
+
+
+def get_chapter_links(catalog_soup):
+    """Extracts chapter links starting from '第1章' from the parsed catalog page."""
         if paragraphs:
             # Join text from all paragraphs, stripping extra whitespace from each
             content = "\n\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
@@ -108,7 +160,8 @@ def main():
 
     try:
         logging.info("Fetching catalog page...")
-        response = requests.get(CATALOG_URL, timeout=REQUEST_TIMEOUT_SECONDS)
+        # Use headers for the catalog request as well
+        response = requests.get(CATALOG_URL, headers=HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
         response.raise_for_status()
         response.encoding = response.apparent_encoding if response.apparent_encoding else 'utf-8'
         logging.info("Catalog page fetched successfully.")
