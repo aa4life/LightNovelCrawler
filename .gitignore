@@ -173,3 +173,7 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 .aider*
+
+novel_chapters/
+epub_output/
+*.epub
