@@ -25,7 +25,7 @@
 
 ## 安裝
 
-1.  **克隆儲存庫：**
+1.  **Clone：**
     ```bash
     git clone <repository_url>
     cd <repository_directory>
@@ -40,7 +40,6 @@
     ```bash
     playwright install
     ```
-    （這可能需要 `chromium`、`firefox` 或 `webkit`，具體取決於爬蟲的實作，儘管目前的 `scraper.py` 摘要並未明確顯示 Playwright 的使用，但它通常用於動態內容）。*更正：提供的摘要並未顯示 Playwright 的使用，因此除非 Playwright 被依賴項內部使用或計劃用於將來使用，否則此步驟可能不是必需的。*
 
 ## 配置
 
