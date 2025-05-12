@@ -1,5 +1,8 @@
 # Linovelib 爬蟲與 EPUB 製作工具
 
+本專案可以於下列網站爬蟲抓取小說，並透過程式碼運行後產生epub檔案。
+https://tw.linovelib.com/novel/
+
 這個專案包含兩個 Python 腳本：
 
 1.  `scraper.py`：從 `tw.linovelib.com` 抓取小說章節和圖片。
