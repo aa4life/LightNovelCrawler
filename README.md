@@ -68,11 +68,11 @@ https://tw.linovelib.com/novel/
 1.  **運行爬蟲：**
     執行 `scraper.py` 腳本，提供來自 `tw.linovelib.com` 的小說 ID 作為命令行參數。
     ```bash
-    python scraper.py <novel_id>
+    python scraper.py --novel-id <novel_id>
     ```
     例如，如果小說 URL 是 `https://tw.linovelib.com/novel/1234.html`，則小說 ID 為 `1234`。
     ```bash
-    python scraper.py 1234
+    python scraper.py --novel-id 1234
     ```
     該腳本將在 `novel_chapters/<novel_title>/` 下創建一個目錄結構，其中包含下載的 `.txt` 章節文件和圖片。
 
