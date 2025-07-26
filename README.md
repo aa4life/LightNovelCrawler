@@ -39,11 +39,6 @@ https://tw.linovelib.com/novel/
     pip install requests beautifulsoup4 playwright ebooklib
     ```
 
-3.  **安裝 Playwright 瀏覽器：**
-    ```bash
-    playwright install
-    ```
-
 ## 配置
 
 兩個腳本都在頂部包含可以修改的配置變數：
